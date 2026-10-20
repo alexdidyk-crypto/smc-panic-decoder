@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SMC Panic Decoder</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: single bench-sheet column — input on top, verdict card, then the full reference table */
+:root{
+  --bg:#eef1f4; --surface:#ffffff; --ink:#15202b; --muted:#5d6b78; --line:#d5dce3;
+  --accent:#1f5fa8; --accent-soft:#e3edf8; --hit:#b4441c; --hit-soft:#fbe9e1; --ok:#2f7a4f;
+  --f-body:"Onest", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono:"JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f151b; --surface:#17202a; --ink:#e6ecf2; --muted:#93a1ae; --line:#2a3642;
+  --accent:#6ea8ec; --accent-soft:#1b2b3f; --hit:#f08a5d; --hit-soft:#3a2219; --ok:#6cc58f; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f151b; --surface:#17202a; --ink:#e6ecf2; --muted:#93a1ae; --line:#2a3642;
+  --accent:#6ea8ec; --accent-soft:#1b2b3f; --hit:#f08a5d; --hit-soft:#3a2219; --ok:#6cc58f; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.5;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:28px 48px}
+.wrap{max-width:860px;margin:0 auto;display:flex;flex-direction:column;gap:22px}
+h1{font-size:1.75rem;margin:0;letter-spacing:-.01em;text-wrap:balance}
+h2{font-size:1.05rem;margin:0}
+.lede{color:var(--muted);margin:4px 0 0;max-width:65ch}
+.mono{font-family:var(--f-mono)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:14px}
+.row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:14px}
+@media (max-width:620px){.row{grid-template-columns:1fr}}
+label{display:block;font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px;font-weight:500}
+select,input,textarea{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:10px 12px}
+input,textarea{font-family:var(--f-mono)}
+textarea{min-height:84px;resize:vertical;font-size:.82rem}
+select:focus,input:focus,textarea:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.hint{font-size:.8rem;color:var(--muted)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-family:var(--f-mono);font-size:.78rem;background:var(--accent-soft);color:var(--accent);border:0;border-radius:99px;padding:4px 10px;cursor:pointer}
+.result{border-radius:10px;padding:18px;border:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;gap:10px}
+.result.hit{border-color:var(--hit);background:var(--hit-soft)}
+.result.none{border-style:dashed}
+.verdict{font-size:1.35rem;font-weight:700;text-wrap:balance}
+.result.hit .verdict{color:var(--hit)}
+.conv{display:flex;flex-wrap:wrap;gap:6px 18px;font-family:var(--f-mono);font-size:.82rem;color:var(--muted)}
+.conv b{color:var(--ink);font-weight:600}
+.note{font-size:.88rem;max-width:68ch}
+.parts{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px}
+.tblwrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:500;background:var(--bg)}
+td.code{font-family:var(--f-mono);white-space:nowrap;font-variant-numeric:tabular-nums}
+td.dec{color:var(--muted)}
+tr.grp td{background:var(--bg);font-weight:700;font-size:.8rem}
+tr.mark td{background:var(--hit-soft)}
+tr.mark td.code{color:var(--hit);font-weight:600}
+.foot{font-size:.8rem;color:var(--muted);display:flex;flex-direction:column;gap:6px}
+.foot a{color:var(--accent)}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <h1>SMC Panic Decoder</h1>
+    <p class="lede">Впиши код из строки <span class="mono">S.sensor array</span> в panic-логе (hex или десятичный) и выбери модель. Можно вставить кусок лога целиком, модель и код подтянутся сами.</p>
+  </header>
+
+  <section class="panel" aria-label="Ввод">
+    <div class="row">
+      <div>
+        <label for="model">Модель</label>
+        <select id="model"></select>
+      </div>
+      <div>
+        <label for="code">Код датчика</label>
+        <input id="code" autocomplete="off" spellcheck="false" placeholder="2097152 или 0x200000">
+      </div>
+    </div>
+    <div>
+      <label for="log">Или вставь panic-лог</label>
+      <textarea id="log" spellcheck="false" placeholder='"product" : "iPhone15,4" … S.sensor array 0 - 5 is 0, 2097152, 0, 0, 0'></textarea>
+      <div class="hint" id="logInfo">Лог разбирается прямо в браузере и никуда не отправляется.</div>
+    </div>
+    <div>
+      <label>Примеры</label>
+      <div class="chips" id="examples"></div>
+    </div>
+  </section>
+
+  <section class="result" id="result" aria-live="polite"></section>
+
+  <section style="display:flex;flex-direction:column;gap:10px">
+    <h2>Таблица кодов</h2>
+    <div class="tblwrap"><table id="table"><thead><tr><th>Код (hex)</th><th>Десятичный</th><th>Деталь</th></tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <footer class="foot">
+    <div>* Замена модуля фронтальных датчиков отключает True Tone и автояркость даже с оригинальным экраном; Face ID работает только на iOS 15.2 и новее.</div>
+    <div>** Неоригинальная батарея вызывает предупреждение «неоригинальная батарея». Убирается только оригинальной деталью Apple Self Service Repair и System Configuration.</div>
+    <div>*** Датчик на шлейфе катушки беспроводной зарядки привязан и откалиброван под телефон. Чужая задняя крышка или катушка дают ту же ошибку, если это не оригинальная деталь Apple с System Configuration.</div>
+    <div>Таблица собрана сообществом iFixit, Apple её не публикует. Код показывает, где искать: часто виноват шлейф или разъём рядом с деталью, а не сама деталь. Источник: <a href="https://www.ifixit.com/Wiki/iPhone_SMC_Panic_Assertion_Failed" target="_blank" rel="noopener">iFixit — iPhone SMC Panic Assertion Failed</a>.</div>
+  </footer>
+</div>
+
+<script>
+const PART = {
+  front:{name:"Модуль фронтальных датчиков", en:"Front Sensor Assembly", fn:"*", where:"Шлейф над экраном: датчик приближения, освещённости, фронтальная камера, Face ID."},
+  port:{name:"Разъём зарядки (нижний шлейф)", en:"Charge Port Assembly", fn:"", where:"Нижний шлейф: разъём, микрофоны, на некоторых моделях барометр."},
+  battery:{name:"Батарея", en:"Battery", fn:"**", where:"Датчики температуры и напряжения батареи, её шлейф и разъём на плате."},
+  coil:{name:"Катушка беспроводной зарядки (MagSafe)", en:"Wireless Charge Coil", fn:"***", where:"Шлейф катушки на задней крышке. Проверь подключение, разрывы, влагу, была ли замена крышки."},
+  gyro:{name:"Гироскоп", en:"Gyroscope", fn:"", where:"Находится на нижней плате."},
+  power:{name:"Шлейф кнопки питания", en:"Power Button Flex Cable", fn:"", where:"Боковой шлейф кнопки питания."}
+};
+const MODELS = [
+  {id:"13", name:"iPhone 13 / 13 Pro / 13 Pro Max", types:["iPhone14,5","iPhone14,2","iPhone14,3"], codes:[[0x800,"port"],[0x10000,"front"],[0x40000,"battery"]]},
+  {id:"13mini", name:"iPhone 13 mini", types:["iPhone14,4"], codes:[[0x400,"gyro"],[0x800,"port"],[0x10000,"front"],[0x40000,"battery"]]},
+  {id:"14", name:"iPhone 14 / 14 Plus", types:["iPhone14,7","iPhone14,8"], codes:[[0x100000,"port"],[0x200000,"front"],[0x400000,"coil"],[0x500000,"battery"]]},
+  {id:"14pro", name:"iPhone 14 Pro / Pro Max", types:["iPhone15,2","iPhone15,3"], codes:[[0x41,"battery"],[0x20000,"gyro"],[0x40000,"port"],[0x80000,"front"],[0x100000,"power"]]},
+  {id:"15", name:"iPhone 15 / 15 Plus", types:["iPhone15,4","iPhone15,5"], codes:[[0xa1,"battery"],[0x80000,"port"],[0x100000,"front"],[0x200000,"coil"]]},
+  {id:"15pro", name:"iPhone 15 Pro / Pro Max", types:["iPhone16,1","iPhone16,2"], codes:[[0xa1,"battery"],[0x300000,"port"],[0x400000,"coil"]]},
+  {id:"16pro", name:"iPhone 16 Pro / Pro Max", types:["iPhone17,1","iPhone17,2"], codes:[[0x300000,"port"]]}
+];
+const $ = id => document.getElementById(id);
+const hex = n => "0x" + n.toString(16);
+
+const sel = $("model");
+sel.innerHTML = '<option value="all">Не знаю, искать везде</option>' +
+  MODELS.map(m => `<option value="${m.id}">${m.name}</option>`).join("");
+
+function parseCode(s){
+  s = (s||"").trim().toLowerCase().replace(/[\s,_]/g,"");
+  if(!s) return null;
+  if(/^0x[0-9a-f]+$/.test(s)) return parseInt(s,16);
+  if(/^[0-9]+$/.test(s)) return parseInt(s,10);
+  if(/^[0-9a-f]+$/.test(s)) return parseInt(s,16);
+  return NaN;
+}
+
+// exact match, else a combination of table codes whose OR equals the value
+function lookup(model, v){
+  const exact = model.codes.filter(c => c[0] === v);
+  if(exact.length) return {kind:"exact", parts:exact};
+  const cs = model.codes, n = cs.length;
+  for(let mask=1; mask < (1<<n); mask++){
+    if((mask & (mask-1)) === 0) continue;
+    let acc = 0, picked = [];
+    for(let i=0;i<n;i++) if(mask & (1<<i)){ acc |= cs[i][0]; picked.push(cs[i]); }
+    if(acc === v) return {kind:"combo", parts:picked};
+  }
+  return null;
+}
+
+function partHTML(p){
+  const d = PART[p[1]];
+  return `<li><b>${d.name}</b> <span class="mono">${hex(p[0])}</span>${d.fn?` <span class="hint">${d.fn}</span>`:""}<br><span class="hint">${d.where}</span></li>`;
+}
+
+function render(){
+  const raw = $("code").value, v = parseCode(raw), mid = sel.value, box = $("result");
+  box.className = "result";
+  markTable(null, null);
+  if(v === null){ box.classList.add("none"); box.innerHTML = '<div class="verdict">Впиши код</div><div class="note">Ищи в логе строку <span class="mono">S.sensor array 0 - 5 is …</span> и бери ненулевое число.</div>'; return; }
+  if(Number.isNaN(v)){ box.classList.add("none"); box.innerHTML = '<div class="verdict">Не похоже на код</div><div class="note">Нужно число: десятичное, например <span class="mono">2097152</span>, или hex, например <span class="mono">0x200000</span>.</div>'; return; }
+  const conv = `<div class="conv"><span>hex <b>${hex(v)}</b></span><span>dec <b>${v}</b></span><span>биты <b>${v ? [...Array(32).keys()].filter(i => (v>>>i)&1).join(", ") : "—"}</b></span></div>`;
+  if(v === 0){ box.classList.add("none"); box.innerHTML = conv + '<div class="verdict">0 — датчик в порядке</div><div class="note">Нули в массиве означают, что с этой группой датчиков всё нормально. Ищи ненулевое значение.</div>'; return; }
+  const models = mid === "all" ? MODELS : MODELS.filter(m => m.id === mid);
+  const hits = models.map(m => ({m, r:lookup(m, v)})).filter(x => x.r);
+  if(!hits.length){
+    box.classList.add("none");
+    box.innerHTML = conv + `<div class="verdict">Кода нет в таблице${mid==="all"?"":" для этой модели"}</div><div class="note">Попробуй «Не знаю, искать везде» или проверь, что код взят из строки <span class="mono">S.sensor array</span>. Для моделей, которых нет в списке (11, 12, 16, 16 Plus, 17), в таблице iFixit пока нет данных.</div>`;
+    return;
+  }
+  box.classList.add("hit");
+  const single = hits.length === 1;
+  box.innerHTML = conv + hits.map(({m, r}) => `
+    <div>
+      <div class="verdict">${r.parts.length===1 ? PART[r.parts[0][1]].name : "Несколько деталей сразу"}</div>
+      <div class="hint">${m.name}${r.kind==="combo" ? " · код складывается из нескольких" : ""}</div>
+    </div>
+    <ul class="parts">${r.parts.map(partHTML).join("")}</ul>`).join('<hr style="border:0;border-top:1px solid var(--line);width:100%;margin:4px 0">') +
+    (single ? "" : '<div class="note">Код совпадает у разных моделей и означает у них разное. Выбери модель, чтобы получить один ответ.</div>');
+  markTable(hits.map(h => h.m.id), hits.flatMap(h => h.r.parts.map(p => p[0])));
+}
+
+function buildTable(){
+  $("table").querySelector("tbody").innerHTML = MODELS.map(m =>
+    `<tr class="grp"><td colspan="3">${m.name} <span class="hint mono" style="font-weight:400">${m.types.join(" · ")}</span></td></tr>` +
+    m.codes.map(c => `<tr data-m="${m.id}" data-c="${c[0]}"><td class="code">${hex(c[0])}</td><td class="code dec">${c[0]}</td><td>${PART[c[1]].name} <span class="hint">${PART[c[1]].en}${PART[c[1]].fn?" "+PART[c[1]].fn:""}</span></td></tr>`).join("")
+  ).join("");
+}
+function markTable(ids, codes){
+  document.querySelectorAll("#table tr[data-m]").forEach(tr => {
+    tr.classList.toggle("mark", !!ids && ids.includes(tr.dataset.m) && codes.includes(+tr.dataset.c));
+  });
+}
+
+function parseLog(){
+  const t = $("log").value, info = $("logInfo");
+  if(!t.trim()){ info.textContent = "Лог разбирается прямо в браузере и никуда не отправляется."; return; }
+  const found = [];
+  const pm = t.match(/"product"\s*:\s*"(iPhone\d+,\d+)"/) || t.match(/\b(iPhone\d+,\d+)\b/);
+  if(pm){
+    const m = MODELS.find(x => x.types.includes(pm[1]));
+    if(m){ sel.value = m.id; found.push(`модель ${m.name} (${pm[1]})`); }
+    else found.push(`модель ${pm[1]} — нет в таблице`);
+  }
+  const sm = t.match(/S\.sensor array[^\n]*?is\s*([0-9x,\s]+)/i);
+  if(sm){
+    const nz = sm[1].split(",").map(s => s.trim()).filter(s => s && s !== "0");
+    if(nz.length){ $("code").value = nz[0]; found.push(`код ${nz[0]}`); }
+    else found.push("в S.sensor array одни нули");
+  }
+  const miss = t.match(/Missing sensor\(s\):\s*([^\n]+)/i);
+  if(miss) found.push(`строка Missing sensor(s): ${miss[1].trim()}`);
+  if(/SMC BSC failure/i.test(t)) found.push("SMC BSC failure");
+  info.textContent = found.length ? "Нашёл: " + found.join(" · ") : "В тексте нет ни модели, ни строки S.sensor array.";
+  render();
+}
+
+const EX = [["iPhone 15 · 2097152","15","2097152"],["iPhone 15 · 1048576","15","1048576"],["14 Plus · 0x500000","14","0x500000"],["15 Pro · 0x300000","15pro","0x300000"],["Без модели · 0x80000","all","0x80000"]];
+$("examples").innerHTML = EX.map((e,i) => `<button class="chip" type="button" data-i="${i}">${e[0]}</button>`).join("");
+$("examples").addEventListener("click", ev => {
+  const b = ev.target.closest(".chip"); if(!b) return;
+  const e = EX[+b.dataset.i]; sel.value = e[1]; $("code").value = e[2]; render();
+});
+$("code").addEventListener("input", render);
+sel.addEventListener("change", render);
+$("log").addEventListener("input", parseLog);
+
+buildTable();
+sel.value = "15"; $("code").value = "2097152";
+render();
+</script>
+</body>
+</html>
